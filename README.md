@@ -74,18 +74,18 @@ python3 tools/inspect_package.py
 python3 tools/audit_repository.py
 ```
 
-The build writes a deterministic versioned ZIP such as `dist/apple-shared-album-0.1.5.zip`, matching release manifest, SHA-256 file, and compile-time SDK JAR. The ZIP contains exactly the Plugin Manager root files (`kiosk-satellite-plugin.json`, `plugin.jar`, and `LICENSE`) plus any supported `assets/` files; `NOTICE` remains in the repository and is linked below for upstream attribution. ZIP entries have fixed timestamps and ordering. Toolchain changes can still alter DEX bytes, so release assets must come from one workflow run.
+The build writes a deterministic versioned ZIP such as `dist/apple-shared-album-0.1.6.zip`, matching release manifest, SHA-256 file, and compile-time SDK JAR. The ZIP contains exactly the Plugin Manager root files (`kiosk-satellite-plugin.json`, `plugin.jar`, and `LICENSE`) plus any supported `assets/` files; `NOTICE` remains in the repository and is linked below for upstream attribution. ZIP entries have fixed timestamps and ordering. Toolchain changes can still alter DEX bytes, so release assets must come from one workflow run.
 
 Tests use only synthetic JSON, fake transport responses, and reserved fake paths. They never contact an album. See [docs/development.md](docs/development.md) for the verification matrix and [docs/research.md](docs/research.md) for source/version/license provenance.
 
-## Limitations and live gate
+## Limitations and device validation
 
 - Apple's public album protocols are undocumented and may change.
 - Still images only; videos and Live Photo motion are skipped.
 - Albums are capped at 1,000 displayable images; CloudKit traversal is capped at 25 pages and 2,500 records. The page cap is 25 because the request size is now 100 records and 2,500 remains the independent total-record ceiling.
 - No image is cached on disk. Restarting or refreshing needs network access.
 - Capture dates depend on Apple returning `dateCreated` (legacy) or `assetDate` (CloudKit), or on usable JPEG EXIF. Place names require explicit IPTC/XMP location fields in the downloaded JPEG; otherwise GPS display requires usable JPEG EXIF. The maintained protocol references inspected do not expose a stable Apple payload place field. True names for coordinate-only photos require an explicit privacy/provider choice for reverse geocoding.
-- Automated tests prove parsing, protocol shaping, a 70-photo legacy album in three bounded asset batches, a 70-photo paired CloudKit response larger than the former 2 MiB ceiling, safe rendition preference/fallback, distinct size failures, decoded-pixel protection, pagination, overlay rendering, text-only pixel shift, local EXIF/IPTC/XMP parsing, packaging, and compilation with synthetic fixtures. **A maintainer must still install the ZIP on a Kiosk Satellite 2026.10.18+ device and test owner-provided public albums in both URL formats before publishing v0.1.5.** Never put a live album URL, photo, coordinate, or metadata in an issue, fixture, CI variable, commit, or log.
+- Automated tests prove parsing, protocol shaping, a 70-photo legacy album in three bounded asset batches, a 70-photo paired CloudKit response larger than the former 2 MiB ceiling, safe rendition preference/fallback, distinct size failures, decoded-pixel protection, pagination, overlay rendering, text-only pixel shift, local EXIF/IPTC/XMP parsing, packaging, and compilation with synthetic fixtures. **On 20 October 2026, the maintainer confirmed that the device checks were completed and both supported public album URL formats were working.** Never put a live album URL, photo, coordinate, or metadata in an issue, fixture, CI variable, commit, or log.
 
 ## License
 

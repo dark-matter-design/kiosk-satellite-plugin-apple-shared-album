@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "apple-shared-album",
   "name": "Apple Shared Album",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "apiVersion": 1,
   "minAndroidSdk": 24,
   "entryClass": "com.darkmatter.kiosk.applealbum.AppleSharedAlbumPlugin",
@@ -193,5 +193,6 @@
     {
       "title": "Overlay"
     }
-  ]
+  ],
+  "icon": "icon.png"
 }

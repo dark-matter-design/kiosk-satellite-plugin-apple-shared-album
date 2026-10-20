@@ -26,9 +26,11 @@ The native host batches publication for 250 ms and sends the live catalog to Flu
 
 SDK 1 number settings are finite JSON numbers constrained to the manifest's inclusive `min`/`max` and exact `step`. The display-duration manifest exposes 5–3,600 seconds in 5-second steps with a 30-second default (719 divisions, below SDK 1's 10,000-division limit). Runtime code independently rejects non-finite/non-numeric input, clamps finite values before arithmetic, rounds to the nearest 5-second step, clamps the normalized result again, and stores the scheduled delay as `long`. Every value accepted by the earlier 5–300 second range remains valid and unchanged.
 
-## Manual device gate
+## Manual device validation
 
-Before publishing v0.1.5:
+On 20 October 2026, the maintainer confirmed completion of the device checks and working playback with both supported public album URL formats. No live album links, images or metadata are recorded here.
+
+Retain the following as the regression checklist for future releases:
 
 1. Install the local ZIP on Kiosk Satellite 2026.10.18 or newer.
 2. Leave the host-wide **Screensaver > Pixel shift** off, then verify start, rotation, fit/fill, refresh, disable, re-enable, URL replacement, all four overlay positions, 12/24-hour and seconds modes, current date, missing metadata behavior, readable contrast on bright/dark fit/fill photos, text-only plugin pixel shift with a stationary photo, and uninstall. Separately confirm that enabling the host-wide setting moves the outer plugin WebView, as documented, rather than mistaking that host behavior for this plugin's overlay transform.
