@@ -39,3 +39,19 @@ Retain the following as the regression checklist for future releases:
 5. Confirm disabling or replacing the plugin stops network traffic and a stale image never reappears.
 
 The repository and automated suite must continue to contain synthetic fixtures only.
+
+## Build and package reference
+
+The release toolchain is pinned to Ubuntu 24.04, Temurin 21, Android platform 35, Android build-tools 35.0.0, Java `--release 8`, and Python 3 as supplied by the runner. Locally, set `JAVA_HOME` and `ANDROID_HOME`, then run:
+
+```sh
+python3 tools/test.py
+python3 tools/build.py --android-platform 35
+python3 tools/check_upstream_screensaver.py /path/to/kiosk-satellite
+python3 tools/inspect_package.py
+python3 tools/audit_repository.py
+```
+
+The build writes a deterministic versioned ZIP such as `dist/apple-shared-album-0.1.6.zip`, matching release manifest, SHA-256 file, and compile-time SDK JAR. The ZIP contains exactly the Plugin Manager root files (`kiosk-satellite-plugin.json`, `plugin.jar`, and `LICENSE`) plus any supported `assets/` files; `NOTICE` remains in the repository and is linked below for upstream attribution. ZIP entries have fixed timestamps and ordering. Toolchain changes can still alter DEX bytes, so release assets must come from one workflow run.
+
+Tests use only synthetic JSON, fake transport responses, and reserved fake paths. They never contact an album. See [development notes](development.md) for the verification matrix and [research notes](research.md) for source/version/license provenance.
