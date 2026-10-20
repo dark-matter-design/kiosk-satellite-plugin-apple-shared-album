@@ -33,6 +33,9 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
     private AppleAlbumClient client;
     private final AppleAlbumClient.Transport testTransport;
     private volatile boolean running;
+    private volatile boolean screensaverActive;
+    private long session;
+    private long stateRevision;
     private volatile String albumUrl = "";
     private volatile String order = "Shuffle";
     private volatile String fit = "Fit whole photo";
@@ -49,8 +52,12 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
     }
 
     @Override public synchronized void start(PluginHost host, Map<String, Object> settings) {
+        if (running) stop();
         this.host = host;
         this.running = true;
+        this.screensaverActive = false;
+        final long expectedSession = ++session;
+        generation.incrementAndGet();
         this.executor = Executors.newSingleThreadScheduledExecutor(new ThreadFactory() {
             @Override public Thread newThread(Runnable runnable) {
                 Thread thread = new Thread(runnable, "apple-album-worker");
@@ -61,7 +68,22 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
         this.client = new AppleAlbumClient(testTransport == null ? new SafeHttp() : testTransport);
         applySettings(settings);
         publishInitial();
-        schedule(0, generation.incrementAndGet());
+        // Subscribe before reading: an event after this read was requested takes precedence.
+        host.subscribe("screensaver.state");
+        final long readRevision = stateRevision;
+        host.executeCommand("isScreensaverActive", Collections.<String, Object>emptyMap(),
+                new PluginHost.CommandCallback() {
+                    @Override public void onResult(boolean ok, Object data, String error) {
+                        synchronized (AppleSharedAlbumPlugin.this) {
+                            if (!running || session != expectedSession || stateRevision != readRevision) return;
+                            if (!ok || !(data instanceof Boolean)) {
+                                status("Waiting for screensaver state. Album downloads are paused.", true);
+                                return;
+                            }
+                            setScreensaverActive(Boolean.TRUE.equals(data));
+                        }
+                    }
+                });
     }
 
     @Override public synchronized void configure(Map<String, Object> settings) {
@@ -75,23 +97,48 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
     }
 
     @Override public synchronized void execute(String command, Map<String, Object> arguments) {
-        if (!"refresh".equals(command)) return;
+        if (!running || !"refresh".equals(command)) return;
         images = Collections.emptyList(); loadedAt = 0;
         long current = generation.incrementAndGet();
         client.cancel();
         if (pending != null) pending.cancel(true);
-        status("Refreshing public album…", false);
+        status(screensaverActive ? "Refreshing public album…" : "Album will refresh when the screensaver starts.", false);
         schedule(0, current);
     }
 
-    @Override public void onEvent(String event, Map<String, Object> payload) { }
+    @Override public synchronized void onEvent(String event, Map<String, Object> payload) {
+        if (!running || !"ks.screensaver.state".equals(event) || payload == null
+                || !(payload.get("active") instanceof Boolean)) return;
+        stateRevision++;
+        setScreensaverActive(Boolean.TRUE.equals(payload.get("active")));
+    }
+
+    private void setScreensaverActive(boolean active) {
+        if (screensaverActive == active) return;
+        screensaverActive = active;
+        long current = generation.incrementAndGet();
+        if (pending != null) pending.cancel(true);
+        pending = null;
+        if (client != null && !active) client.cancel();
+        // Signed URLs may expire while idle. Refresh the list on the next activation.
+        images = Collections.emptyList(); cursor = 0; loadedAt = 0;
+        if (active) {
+            publishInitial();
+            schedule(0, current);
+        } else {
+            status("Paused until the screensaver starts.", false);
+        }
+    }
 
     @Override public synchronized void stop() {
         running = false;
+        screensaverActive = false;
+        session++;
         generation.incrementAndGet();
         if (pending != null) pending.cancel(true);
         if (client != null) client.cancel();
         if (executor != null) executor.shutdownNow();
+        try { if (host != null) host.unsubscribe("screensaver.state"); } catch (RuntimeException ignored) { }
         try { if (host != null) host.removeScreensaver(RENDERER_KEY); } catch (RuntimeException ignored) { }
         host = null; client = null; executor = null; pending = null;
         images = Collections.emptyList();
@@ -113,12 +160,12 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
             status("Add a public Apple Shared Album link.", false);
         } else {
             host.publishScreensaver(RENDERER_KEY, RENDERER_TITLE, SlideshowHtml.message("Loading public album…"));
-            status("Loading public album…", false);
+            status(screensaverActive ? "Loading public album…" : "Paused until the screensaver starts.", false);
         }
     }
 
     private synchronized void schedule(long delaySeconds, final long expectedGeneration) {
-        if (!running || executor == null || expectedGeneration != generation.get()) return;
+        if (!isCurrent(expectedGeneration) || executor == null) return;
         pending = executor.schedule(new Runnable() {
             @Override public void run() { cycle(expectedGeneration); }
         }, delaySeconds, TimeUnit.SECONDS);
@@ -158,6 +205,7 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
                 cancel.check();
                 AppleAlbumClient.ImageRef image;
                 synchronized (this) {
+                    cancel.check();
                     if (cursor >= images.size()) {
                         cursor = 0;
                         if ("Shuffle".equals(order)) Collections.shuffle(images, random);
@@ -171,7 +219,9 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
                             byte[] source = currentClient.image(image, rendition, cancel);
                             cancel.check();
                             PhotoMetadata metadata = image.metadata.withFallback(ExifMetadata.read(source));
+                            cancel.check();
                             byte[] display = PhotoEncoder.fit(source);
+                            cancel.check();
                             source = null;
                             OverlayOptions currentOverlay = overlay;
                             String html = SlideshowHtml.image(display, fit, currentOverlay, metadata,
@@ -207,7 +257,7 @@ public final class AppleSharedAlbumPlugin implements KioskPlugin {
         }
     }
 
-    private boolean isCurrent(long expected) { return running && generation.get() == expected; }
+    private boolean isCurrent(long expected) { return running && screensaverActive && generation.get() == expected; }
 
     /** Configure/stop use the same monitor, so a stale session cannot cross this publication gate. */
     private synchronized void publishIfCurrent(long expected, String html, int count) throws AlbumException {

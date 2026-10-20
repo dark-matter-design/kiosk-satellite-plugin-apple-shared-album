@@ -52,6 +52,12 @@ python3 tools/inspect_package.py
 python3 tools/audit_repository.py
 ```
 
-The build writes a deterministic versioned ZIP such as `dist/apple-shared-album-0.1.6.zip`, matching release manifest, SHA-256 file, and compile-time SDK JAR. The ZIP contains exactly the Plugin Manager root files (`kiosk-satellite-plugin.json`, `plugin.jar`, and `LICENSE`) plus any supported `assets/` files; `NOTICE` remains in the repository and is linked below for upstream attribution. ZIP entries have fixed timestamps and ordering. Toolchain changes can still alter DEX bytes, so release assets must come from one workflow run.
+The build writes a deterministic versioned ZIP such as `dist/apple-shared-album-0.1.7.zip`, matching release manifest, SHA-256 file, and compile-time SDK JAR. The ZIP contains exactly the Plugin Manager root files (`kiosk-satellite-plugin.json`, `plugin.jar`, and `LICENSE`) plus any supported `assets/` files; `NOTICE` remains in the repository and is linked below for upstream attribution. ZIP entries have fixed timestamps and ordering. Toolchain changes can still alter DEX bytes, so release assets must come from one workflow run.
 
 Tests use only synthetic JSON, fake transport responses, and reserved fake paths. They never contact an album. See [development notes](development.md) for the verification matrix and [research notes](research.md) for source/version/license provenance.
+
+## Screensaver activity lifecycle
+
+The renderer is registered immediately for discovery. Network work starts only after `isScreensaverActive` or `ks.screensaver.state` reports active. The plugin declares `host.read`, subscribes to `screensaver.state` before reading the initial state, and ignores a late initial reply after any newer event or session replacement. Failed or invalid reads leave downloads paused until a valid event arrives.
+
+Each active-to-idle transition invalidates the worker generation, cancels scheduled work and disconnects transport without waiting for I/O. It keeps the renderer registered. Activation loads the first photo immediately and resumes the normal interval. Configure and refresh while idle invalidate old work but defer all network access. Stop also unsubscribes and removes the renderer. Tests cover idle startup, active startup, repeated events, pause/resume, deferred refresh/configuration, read/event races, stale session callbacks and cancellation of in-flight metadata work.

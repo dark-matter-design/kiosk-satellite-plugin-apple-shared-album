@@ -51,7 +51,11 @@ public final class AppleAlbumTest {
         jsonRoundTripsAndBoundsDepth();
         publishesSelectableScreensaverBeforeAlbumIo();
         lifecycleCancellationDoesNotWaitForMetadataIo();
-        System.out.println("AppleAlbumTest: 27 checks passed");
+        pausesDownloadsAcrossScreensaverTransitions();
+        initialReadCannotOverrideNewerEventsOrSessions();
+        pauseCancelsImageDownloadAndPreventsPublication();
+        retriesAndReconfigurationStayInsideActiveSession();
+        System.out.println("AppleAlbumTest: 31 checks passed");
     }
 
     private static void parsesOnlySupportedUrls() throws Exception {
@@ -708,7 +712,7 @@ public final class AppleAlbumTest {
         AppleSharedAlbumPlugin plugin = new AppleSharedAlbumPlugin(transport);
         Map<String, Object> settings = new HashMap<>();
         settings.put("albumUrl", "https://www.icloud.com/sharedalbum/#B12abcDEF");
-        plugin.start(new FakeHost(), settings);
+        plugin.start(new FakeHost(true), settings);
         assert transport.entered.await(2, TimeUnit.SECONDS) : "metadata request did not start";
         long started = System.nanoTime();
         plugin.stop();
@@ -727,6 +731,217 @@ public final class AppleAlbumTest {
         assert host.screensaverHtml != null && host.screensaverHtml.contains("Add a public Apple Shared Album link");
         plugin.stop();
         assert "apple_album".equals(host.removedScreensaverKey);
+    }
+
+
+    private static Map<String, Object> albumSettings() {
+        Map<String, Object> settings = new HashMap<>();
+        settings.put("albumUrl", "https://www.icloud.com/sharedalbum/#B12abcDEF");
+        return settings;
+    }
+
+    private static void activity(AppleSharedAlbumPlugin plugin, boolean active) {
+        plugin.onEvent("ks.screensaver.state", Collections.<String, Object>singletonMap("active", active));
+    }
+
+    private static Object pluginField(AppleSharedAlbumPlugin plugin, String name) throws Exception {
+        java.lang.reflect.Field field = AppleSharedAlbumPlugin.class.getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(plugin);
+    }
+
+    private static void drainWorker(AppleSharedAlbumPlugin plugin) throws Exception {
+        java.util.concurrent.ScheduledExecutorService executor =
+                (java.util.concurrent.ScheduledExecutorService) pluginField(plugin, "executor");
+        executor.submit(new Runnable() { @Override public void run() { } }).get(2, TimeUnit.SECONDS);
+    }
+
+    private static void assertPaused(AppleSharedAlbumPlugin plugin) throws Exception {
+        drainWorker(plugin);
+        assert Boolean.FALSE.equals(pluginField(plugin, "screensaverActive"));
+        java.util.concurrent.ScheduledFuture<?> pending =
+                (java.util.concurrent.ScheduledFuture<?>) pluginField(plugin, "pending");
+        assert pending == null || pending.isDone() : "idle plugin has scheduled network work";
+    }
+
+    private static void pausesDownloadsAcrossScreensaverTransitions() throws Exception {
+        GatedTransport transport = new GatedTransport(false);
+        AppleSharedAlbumPlugin plugin = new AppleSharedAlbumPlugin(transport);
+        FakeHost host = new FakeHost(false);
+        try {
+            plugin.start(host, albumSettings());
+            assert "screensaver.state".equals(host.subscribed);
+            assert host.subscribeBeforeRead : "read happened before subscription";
+            assert "apple_album".equals(host.screensaverKey) : "idle renderer is not selectable";
+            assertPaused(plugin);
+            plugin.configure(albumSettings());
+            plugin.execute("refresh", Collections.<String, Object>emptyMap());
+            assertPaused(plugin);
+            assert transport.requests.get() == 0 : "idle startup/configure/refresh contacted Apple";
+
+            activity(plugin, true);
+            assert transport.first.await(2, TimeUnit.SECONDS) : "activation did not fetch immediately";
+            Object pending = pluginField(plugin, "pending");
+            activity(plugin, true);
+            assert pending == pluginField(plugin, "pending") : "duplicate active event restarted loop";
+            long started = System.nanoTime();
+            activity(plugin, false);
+            assert TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started) < 500 : "pause waited for I/O";
+            assertPaused(plugin);
+            assert transport.cancellations.get() > 0 : "pause did not disconnect transport";
+            int requests = transport.requests.get();
+            plugin.configure(albumSettings());
+            plugin.execute("refresh", Collections.<String, Object>emptyMap());
+            assertPaused(plugin);
+            assert transport.requests.get() == requests : "idle settings change restarted downloads";
+
+            activity(plugin, true);
+            assert transport.second.await(2, TimeUnit.SECONDS) : "resume did not restart downloads";
+            activity(plugin, false);
+            assertPaused(plugin);
+            plugin.onEvent("ks.screensaver.state", Collections.<String, Object>singletonMap("active", "true"));
+            plugin.onEvent("ks.screen.state", Collections.<String, Object>singletonMap("active", true));
+            assertPaused(plugin);
+            assert host.publications == 5 : "stale worker published after pause";
+        } finally {
+            plugin.stop();
+        }
+        assert "screensaver.state".equals(host.unsubscribed);
+        assert "apple_album".equals(host.removedScreensaverKey);
+        activity(plugin, true);
+        assert pluginField(plugin, "executor") == null : "event restarted a stopped plugin";
+    }
+
+    private static void initialReadCannotOverrideNewerEventsOrSessions() throws Exception {
+        GatedTransport transport = new GatedTransport(false);
+        AppleSharedAlbumPlugin plugin = new AppleSharedAlbumPlugin(transport);
+        FakeHost host = new FakeHost(null);
+        try {
+            plugin.start(host, albumSettings());
+            assertPaused(plugin);
+            activity(plugin, false);
+            host.reply(true, true); // Older read must not override the newer idle event.
+            assertPaused(plugin);
+            assert transport.requests.get() == 0;
+        } finally { plugin.stop(); }
+
+        host = new FakeHost(null);
+        try {
+            plugin.start(host, albumSettings());
+            activity(plugin, true);
+            assert transport.first.await(2, TimeUnit.SECONDS);
+            Object pending = pluginField(plugin, "pending");
+            host.reply(true, false); // Older read must not stop the newer active event.
+            assert Boolean.TRUE.equals(pluginField(plugin, "screensaverActive"));
+            assert pending == pluginField(plugin, "pending");
+        } finally { plugin.stop(); }
+
+        FakeHost oldHost = new FakeHost(null);
+        plugin.start(oldHost, albumSettings());
+        plugin.stop();
+        FakeHost newHost = new FakeHost(null);
+        try {
+            plugin.start(newHost, albumSettings());
+            oldHost.reply(true, true);
+            assertPaused(plugin);
+            newHost.reply(false, null); // Failed initial read keeps network paused.
+            assertPaused(plugin);
+            activity(plugin, true);
+            assert transport.second.await(2, TimeUnit.SECONDS) : "event did not recover failed initial read";
+        } finally { plugin.stop(); }
+    }
+
+    private static void pauseCancelsImageDownloadAndPreventsPublication() throws Exception {
+        GatedTransport transport = new GatedTransport(true);
+        AppleSharedAlbumPlugin plugin = new AppleSharedAlbumPlugin(transport);
+        FakeHost host = new FakeHost(true);
+        try {
+            plugin.start(host, albumSettings());
+            assert transport.imageEntered.await(2, TimeUnit.SECONDS) : "active startup did not prefetch photo";
+            activity(plugin, false);
+            assertPaused(plugin);
+            assert transport.cancellations.get() > 0;
+            assert host.publications == 2 : "cancelled image was published";
+        } finally { plugin.stop(); }
+    }
+
+    private static final class GatedTransport implements AppleAlbumClient.Transport {
+        final boolean blockImage;
+        final java.util.concurrent.atomic.AtomicInteger requests = new java.util.concurrent.atomic.AtomicInteger();
+        final java.util.concurrent.atomic.AtomicInteger cancellations = new java.util.concurrent.atomic.AtomicInteger();
+        final CountDownLatch first = new CountDownLatch(1);
+        final CountDownLatch second = new CountDownLatch(1);
+        final CountDownLatch imageEntered = new CountDownLatch(1);
+        GatedTransport(boolean blockImage) { this.blockImage = blockImage; }
+        @Override public AppleAlbumClient.Response post(URI uri, String json, AppleAlbumClient.Cancellation cancel)
+                throws AlbumException {
+            cancel.check();
+            int count = requests.incrementAndGet();
+            if (count == 1) first.countDown();
+            if (count == 2) second.countDown();
+            if (!blockImage) return waitForCancellation(cancel);
+            String body = uri.getPath().endsWith("webstream")
+                    ? "{\"photos\":[{\"photoGuid\":\"synthetic\",\"derivatives\":{\"1024\":{\"checksum\":\"image\",\"width\":1024,\"height\":768}}}]}"
+                    : "{\"items\":{\"image\":{\"url_location\":\"cvws.icloud-content.com\",\"url_path\":\"/synthetic/image.jpg\"}}}";
+            return new AppleAlbumClient.Response(200, Collections.<String, String>emptyMap(),
+                    body.getBytes(StandardCharsets.UTF_8), uri);
+        }
+        @Override public AppleAlbumClient.Response getImage(URI uri, AppleAlbumClient.Cancellation cancel)
+                throws AlbumException {
+            cancel.check();
+            imageEntered.countDown();
+            return waitForCancellation(cancel);
+        }
+        private AppleAlbumClient.Response waitForCancellation(AppleAlbumClient.Cancellation cancel)
+                throws AlbumException {
+            while (true) {
+                cancel.check();
+                try { Thread.sleep(5); }
+                catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new AlbumException(AlbumException.Code.CANCELLED);
+                }
+            }
+        }
+        @Override public void cancelAll() { cancellations.incrementAndGet(); }
+    }
+
+
+    private static void retriesAndReconfigurationStayInsideActiveSession() throws Exception {
+        final java.util.concurrent.atomic.AtomicInteger requests = new java.util.concurrent.atomic.AtomicInteger();
+        AppleAlbumClient.Transport transport = new AppleAlbumClient.Transport() {
+            @Override public AppleAlbumClient.Response post(URI uri, String json, AppleAlbumClient.Cancellation cancel)
+                    throws AlbumException {
+                cancel.check();
+                requests.incrementAndGet();
+                throw new AlbumException(AlbumException.Code.NETWORK);
+            }
+            @Override public AppleAlbumClient.Response getImage(URI uri, AppleAlbumClient.Cancellation cancel) {
+                throw new AssertionError("unexpected image request");
+            }
+            @Override public void cancelAll() { }
+        };
+        AppleSharedAlbumPlugin plugin = new AppleSharedAlbumPlugin(transport);
+        try {
+            plugin.start(new FakeHost(true), albumSettings());
+            drainWorker(plugin);
+            assert requests.get() == 1;
+            java.util.concurrent.ScheduledFuture<?> retry =
+                    (java.util.concurrent.ScheduledFuture<?>) pluginField(plugin, "pending");
+            assert !retry.isDone() : "active failure did not schedule a retry";
+            plugin.configure(albumSettings());
+            drainWorker(plugin);
+            assert retry.isCancelled() : "configure left an old retry scheduled";
+            assert requests.get() == 2;
+            plugin.execute("refresh", Collections.<String, Object>emptyMap());
+            drainWorker(plugin);
+            assert requests.get() == 3;
+            retry = (java.util.concurrent.ScheduledFuture<?>) pluginField(plugin, "pending");
+            activity(plugin, false);
+            assertPaused(plugin);
+            assert retry.isCancelled() : "pause left a retry scheduled";
+            assert requests.get() == 3;
+        } finally { plugin.stop(); }
     }
 
     private static void rejectsUrl(String value) throws Exception {
@@ -797,11 +1012,30 @@ public final class AppleAlbumTest {
     }
 
     private static final class FakeHost implements PluginHost {
+        final Boolean initialActive;
+        String subscribed;
+        String unsubscribed;
+        boolean subscribeBeforeRead;
+        CommandCallback stateCallback;
+        volatile int publications;
+        FakeHost() { this(false); }
+        FakeHost(Boolean active) { initialActive = active; }
+        @Override public void subscribe(String event) { subscribed = event; }
+        @Override public void unsubscribe(String event) { unsubscribed = event; }
+        @Override public void executeCommand(String command, Map<String, Object> args, CommandCallback callback) {
+            assert "isScreensaverActive".equals(command);
+            assert args.isEmpty();
+            subscribeBeforeRead = "screensaver.state".equals(subscribed);
+            stateCallback = callback;
+            if (initialActive != null) reply(true, initialActive);
+        }
+        void reply(boolean ok, Object value) { stateCallback.onResult(ok, value, ok ? null : "unavailable"); }
         String screensaverKey;
         String screensaverTitle;
         String screensaverHtml;
         String removedScreensaverKey;
         @Override public void publishScreensaver(String key, String title, String html) {
+            publications++;
             screensaverKey = key; screensaverTitle = title; screensaverHtml = html;
         }
         @Override public void removeScreensaver(String key) { removedScreensaverKey = key; }

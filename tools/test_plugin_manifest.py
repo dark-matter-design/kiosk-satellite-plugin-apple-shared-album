@@ -13,6 +13,7 @@ class BuildManifestTest(unittest.TestCase):
         self.assertEqual(manifest['schemaVersion'], 1)
         self.assertEqual(manifest['apiVersion'], 1)
         self.assertIn('screensaver', manifest['capabilities'])
+        self.assertIn('host.read', manifest['capabilities'])
         self.assertEqual(
             manifest['entryClass'],
             'com.darkmatter.kiosk.applealbum.AppleSharedAlbumPlugin',
@@ -28,7 +29,7 @@ class BuildManifestTest(unittest.TestCase):
 
     def test_overlay_defaults_positions_and_privacy_contract(self):
         manifest = json.loads((Path(__file__).resolve().parents[1] / 'kiosk-satellite-plugin.json').read_text())
-        self.assertEqual(manifest['version'], '0.1.6')
+        self.assertEqual(manifest['version'], '0.1.7')
         settings = {setting['key']: setting for setting in manifest['settings']}
         self.assertEqual(settings['showClock']['default'], False)
         self.assertEqual(settings['showCurrentDate']['default'], False)

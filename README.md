@@ -17,13 +17,13 @@ Private albums, invitation or approval links, iCloud Links (`share.icloud.com/ph
 
 ## Installation
 
-### Install button
+### Community Plugins (recommended)
 
 Open the plugin in Kiosk Satellite, review it and choose **Trust and install**.
 
 [![Install in Kiosk Satellite](https://kiosksatellite.com/img/badges/plugin-add.svg)](https://kiosksatellite.com/redirect/plugin/?repository=dark-matter-design/kiosk-satellite-plugin-apple-shared-album)
 
-The button uses the [Community Plugins](https://kiosksatellite.com/plugins/) installer. If the plugin is not available there yet, use the manual steps below. Once listed, you can also search for **Apple Shared Album** under **Settings > Plugin Manager > Browse plugins**.
+This plugin is listed in [Community Plugins](https://kiosksatellite.com/plugins/). You can also search for **Apple Shared Album** under **Settings > Plugin Manager > Browse plugins**.
 
 ### Manual installation
 
@@ -61,7 +61,7 @@ If Remote Admin does not show the screensaver, check that the plugin says **Runn
 | Overlay appearance | Font family, weight, colour and 50-150% size; light sans serif, near-white and 100% by default |
 | Shift overlay pixels | Moves the text overlay once per minute; off by default |
 
-The album list refreshes every 15 minutes. Use **Reconnect and refresh album** to discard the current list and reconnect immediately. Compatible saved settings are retained after updates.
+Photos are downloaded only while Kiosk Satellite reports that the screensaver is active. The first photo starts loading immediately on activation. Downloads, retries and album refreshes pause when it closes; an in-flight request is cancelled. The album list refreshes every 15 minutes while active and is reloaded on the next activation. Use **Reconnect and refresh album** to discard the current list and reconnect while the screensaver is active, or when it next starts. Compatible saved settings are retained after updates.
 
 ### Photo details and pixel shift
 
@@ -75,7 +75,7 @@ The kiosk sends the public album token or ID directly to Apple's iCloud services
 
 **Treat the album link as sensitive:** it grants public read access. Kiosk Satellite stores and displays it as an ordinary plugin setting, so anyone with access to settings or backups may be able to read it. Protect Remote Admin and backups, and disable the album's Public Website in Photos to revoke access.
 
-Requests, redirects, image decoding and rendered output have enforced limits. Errors omit album URLs, tokens, images and metadata. See the [privacy details](docs/privacy.md) and [security policy](SECURITY.md).
+The plugin requests `screensaver` to register the photo renderer and `host.read` to read `isScreensaverActive` and subscribe to `screensaver.state`. It does not request host control. Requests, redirects, image decoding and rendered output have enforced limits. Errors omit album URLs, tokens, images and metadata. See the [privacy details](docs/privacy.md) and [security policy](SECURITY.md).
 
 ## Limitations
 
@@ -93,4 +93,4 @@ The maintainer confirmed device testing with both supported public album URL for
 
 ## License
 
-[Apache-2.0](LICENSE). See [NOTICE](NOTICE) for upstream attribution. This is an independent community plugin and is not affiliated with Apple.
+[Apache-2.0](LICENSE). See [NOTICE](NOTICE) for upstream attribution. Apple, iCloud, Apple Photos and Kiosk Satellite are names of their respective owners. This independent community plugin is not endorsed by Apple or Kiosk Satellite.

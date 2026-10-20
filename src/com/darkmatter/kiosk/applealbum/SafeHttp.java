@@ -53,6 +53,7 @@ final class SafeHttp implements AppleAlbumClient.Transport {
             try {
                 connection = (HttpURLConnection) new URL(uri.toASCIIString()).openConnection();
                 active.add(connection);
+                cancel.check();
                 connection.setInstanceFollowRedirects(false);
                 connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
                 connection.setReadTimeout(readTimeoutMs);
